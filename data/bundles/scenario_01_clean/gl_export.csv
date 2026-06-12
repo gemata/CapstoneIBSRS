@@ -1,0 +1,6 @@
+gl_id,date,account_code,description,reference,amount
+G-101,2026-05-04,1010,AR receipt Acme Corp inv 2201,INV-2201,9500.00
+G-102,2026-05-08,1010,AP payment Blue Office Supplies,PO-7741,-3200.00
+G-103,2026-05-12,1010,Payroll batch May A,PAY-0512,-8750.00
+G-104,2026-05-18,1010,Wire receipt Northwind Trading,WIRE-553,6300.00
+G-105,2026-05-26,1010,Office rent May Mayfield,RENT-05,-1150.00

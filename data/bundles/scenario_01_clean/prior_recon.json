@@ -1,0 +1,15 @@
+{
+  "closing_balance_bank": 52400.0,
+  "closing_balance_gl": 52400.0,
+  "outstanding_items": [],
+  "period": "2026-04",
+  "transactions": [
+    {
+      "amount": 2750.0,
+      "date": "2026-04-18",
+      "description": "CUSTOMER PAYMENT APRIL",
+      "reference": "INV-0418",
+      "txn_id": "P-0001"
+    }
+  ]
+}
