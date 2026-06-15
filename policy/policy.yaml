@@ -1,7 +1,13 @@
 matching:
-  date_window_days: 3            # max day gap for amount+date matches
-  amount_tolerance_abs: 0.05     # absolute tolerance for amount equality
-  amount_tolerance_pct: 0.001    # relative tolerance (0.1%)
-  fuzzy_description_threshold: 0.62   # 0..1 token-similarity needed for fuzzy match
+  date_window_days: 3
+  amount_tolerance_abs: 0.05
+  amount_tolerance_pct: 0.001
+  fuzzy_description_threshold: 0.62
   enable_one_to_many: true
   one_to_many_max_parts: 4
+
+thresholds:
+  materiality: 5000.0
+  high_value: 10000.0
+  auto_journal_max: 500.0
+  extraction_review_confidence: 0.80

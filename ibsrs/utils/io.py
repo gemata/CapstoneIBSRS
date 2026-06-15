@@ -1,65 +1,53 @@
 from __future__ import annotations
-import hashlib
+
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+
 from pydantic import BaseModel
 
 
-def write_json(path: Path, data) -> None:
-    if isinstance(data, BaseModel):
-        data = data.model_dump()
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def write_json(path: Path, data: BaseModel | list) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False, separators=(",", ": ")),
-        encoding="utf-8",
-    )
+    if isinstance(data, list):
+        payload = [
+            item.model_dump() if isinstance(item, BaseModel) else item
+            for item in data
+        ]
+    elif isinstance(data, BaseModel):
+        payload = data.model_dump()
+    else:
+        payload = data
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def read_json(path: Path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def file_sha256(path: Path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
-def text_sha256(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 class AuditLog:
-    """Append-only markdown audit trail (audit_log.md).
-    """
-
     def __init__(self, run_dir: Path, run_id: str):
-        self.path = Path(run_dir) / "audit_log.md"
-        if not self.path.exists():
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(
-                f"# IBSRS Audit Log\n\n"
-                f"- Run ID: `{run_id}`\n"
-                f"- Started: {utc_now_iso()}\n\n---\n",
-                encoding="utf-8",
-            )
+        self.run_dir = Path(run_dir)
+        self.run_id = run_id
+        self._lines: list[str] = [f"# Audit Log — {run_id}", ""]
 
     def section(self, agent: str, title: str) -> None:
-        self._append(f"\n## {agent} - {title}\n\n")
+        self._lines.extend(["", f"## {agent}: {title}", ""])
 
-    def step(self, message: str) -> None:
-        self._append(f"- {message}\n")
+    def step(self, msg: str) -> None:
+        self._lines.append(f"- {msg}")
 
-    def decision(self, message: str, rationale: str) -> None:
-        self._append(f"DECISION: {message}\n  - Rationale: {rationale}\n")
+    def decision(self, msg: str, rationale: str) -> None:
+        self._lines.append(f"- **Decision:** {msg}")
+        self._lines.append(f"  - *Rationale:* {rationale}")
 
     def artifact(self, name: str, path: Path) -> None:
-        digest = file_sha256(path)[:16]
-        self._append(f"-WROTE `{name}` (sha256:{digest})\n")
+        self._lines.append(f"- Wrote artifact `{name}` → `{path}`")
 
-    def _append(self, text: str) -> None:
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(text)
+    def close(self) -> None:
+        out = self.run_dir / "audit_log.md"
+        out.write_text("\n".join(self._lines) + "\n", encoding="utf-8")

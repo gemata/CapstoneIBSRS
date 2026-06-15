@@ -25,3 +25,11 @@ class Policy:
     def raw(self) -> dict:
         return self._data
 
+
+def load_policy(path: str | Path | None = None) -> Policy:
+    policy_path = Path(path) if path else DEFAULT_POLICY_PATH
+    if not policy_path.exists():
+        raise FileNotFoundError(f"Policy file not found: {policy_path}")
+    data = yaml.safe_load(policy_path.read_text(encoding="utf-8")) or {}
+    return Policy(data)
+
