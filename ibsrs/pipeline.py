@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ibsrs.agents.agent_a_intake import run_agent_a
 from ibsrs.schemas import Finding
+from ibsrs.utils.io import AuditLog
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = PROJECT_ROOT / "runs"
@@ -42,3 +43,18 @@ return {
                       if (run_dir / a).exists()},
     }
 """
+def prepare_run(bundle_dir: Path, policy_path: Path | None = None) -> tuple[str, Path, AuditLog]:
+    """Create the deterministic run folder and start the audit log."""
+    run_id = compute_run_id(bundle_dir, policy_path)
+    run_dir = RUNS_DIR / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    audit = AuditLog(run_dir, run_id)
+    audit.section("Pipeline", "Run setup")
+    audit.step(f"Created run directory: {run_dir}")
+    audit.decision(
+        "Use file-based coordination for this run.",
+        "Agents exchange artifacts through files under runs/<run_id>/.",
+    )
+
+    return run_id, run_dir, audit
