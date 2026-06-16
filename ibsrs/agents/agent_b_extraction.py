@@ -124,3 +124,72 @@ def _parse_pdf_or_synthetic(stmt_path: Path, ctx: ContextPacket,
                               snippet=f"(synthetic) {desc}"),
         ))
     return txns, True
+
+def run_agent_b(ctx: ContextPacket, run_dir: Path, policy: Policy,
+                audit: AuditLog) -> tuple[TransactionsArtifact, list[Finding]]:
+    audit.section("Agent B", "Transaction Extraction")
+    findings: list[Finding] = []
+    stmt_path = Path(ctx.files["bank_statement"])
+    review_threshold = float(policy.get("thresholds.extraction_review_confidence", 0.8))
+    synthetic = False
+
+    if ctx.account.statement_format == "csv":
+        txns = _parse_csv(stmt_path, ctx, review_threshold)
+    elif ctx.account.statement_format == "mt940":
+        txns = _parse_mt940(stmt_path, ctx, review_threshold)
+    else:
+        txns, synthetic = _parse_pdf_or_synthetic(stmt_path, ctx, review_threshold, audit)
+
+    audit.step(f"Extracted {len(txns)} transactions from {stmt_path.name} "
+               f"({ctx.account.statement_format.upper()})")
+
+    # multi-page/statement-level aggregation: opening + sum(txns) vs closing
+    computed_closing = round(ctx.account.opening_balance + sum(t.amount for t in txns), 2)
+    reconciles = abs(computed_closing - ctx.account.closing_balance) < 0.005
+    audit.decision(
+        f"Balance roll-forward: opening {ctx.account.opening_balance:,.2f} + "
+        f"net movement = {computed_closing:,.2f}; statement closing "
+        f"{ctx.account.closing_balance:,.2f} -> "
+        f"{'RECONCILES' if reconciles else 'DOES NOT RECONCILE'}",
+        "Sum of extracted amounts checked against statement closing balance")
+
+    if not reconciles:
+        findings.append(Finding(
+            finding_id="B-BAL-001", agent="B", category="balance_mismatch",
+            severity="critical", confidence=1.0,
+            title="Statement does not roll forward",
+            detail=(f"Computed closing {computed_closing:,.2f} vs stated "
+                    f"{ctx.account.closing_balance:,.2f}"),
+            evidence=[Evidence(source_file=stmt_path.name, locator="aggregate",
+                               snippet="opening+sum(txns) != closing")],
+            recommendation="Verify extraction completeness / request statement re-issue",
+        ))
+
+    for t in txns:
+        if t.needs_review:
+            findings.append(Finding(
+                finding_id=f"B-REV-{t.txn_id}", agent="B", category="extraction_review",
+                severity="medium", confidence=t.confidence,
+                title=f"Ambiguous/truncated description on {t.txn_id}",
+                detail=f"'{t.description}' scored {t.confidence:.2f} < "
+                       f"{review_threshold:.2f} review threshold",
+                evidence=[t.evidence], related_txn_ids=[t.txn_id],
+                recommendation="Manual review before GL mapping",
+                open_question="What does this memo refer to?",
+            ))
+            audit.step(f"Flagged {t.txn_id} for manual review "
+                       f"(confidence {t.confidence:.2f}): '{t.description}'")
+
+    artifact = TransactionsArtifact(
+        run_id=ctx.run_id, account_id=ctx.account.account_id,
+        period=ctx.account.period, currency=ctx.account.currency,
+        opening_balance=ctx.account.opening_balance,
+        closing_balance=ctx.account.closing_balance,
+        computed_closing_balance=computed_closing,
+        balance_reconciles=reconciles,
+        transactions=txns, synthetic_fallback_used=synthetic,
+    )
+    out = run_dir / "transactions.json"
+    write_json(out, artifact)
+    audit.artifact("transactions.json", out)
+    return artifact, findings
