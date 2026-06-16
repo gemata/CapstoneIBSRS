@@ -18,6 +18,30 @@ _TYPE_KEYWORDS = [
     ("WIRE", ["WIRE", "SWIFT", "TT "]),
     ("TRANSFER", ["TRANSFER", "XFER", "SWEEP"]),
 ]
+def _rate_to_base(currency: str, ctx: ContextPacket) -> float:
+    currency = currency.strip().upper()
+    account_currency = ctx.account.currency.strip().upper()
+
+    if currency == account_currency:
+        return 1.0
+
+    if currency in ctx.fx_rates:
+        return float(ctx.fx_rates[currency])
+
+    raise ValueError(f"Missing FX rate for {currency}")
+
+
+def _convert_currency(amount: float, from_currency: str, ctx: ContextPacket) -> float:
+    from_currency = from_currency.strip().upper()
+    account_currency = ctx.account.currency.strip().upper()
+
+    if from_currency == account_currency:
+        return round(amount, 2)
+
+    amount_in_base = amount * _rate_to_base(from_currency, ctx)
+    account_rate = _rate_to_base(account_currency, ctx)
+
+    return round(amount_in_base / account_rate, 2)
 
 _MT940_TXN = re.compile(
     r"^:61:(\d{6})(\d{4})?([CD])(\d+[,\.]\d*)([A-Z]{4})?([^/]*)(//.*)?$"
@@ -130,11 +154,14 @@ def _parse_csv(stmt_path: Path, ctx: ContextPacket, policy: Policy,
     data_line = header_idx + 1
     for n, row in enumerate(reader, 1):
         desc = (row.get("description") or "").strip()
+        raw_amount = float(row["amount"])
+        raw_currency = (row.get("currency") or ctx.account.currency).strip()
+        amount = _convert_currency(raw_amount, raw_currency, ctx)
         txns.append(_txn_from_row(
             txn_id=f"B-{n:04d}",
             date=row["date"].strip(),
-            amount=round(float(row["amount"]), 2),
-            currency=(row.get("currency") or ctx.account.currency).strip(),
+            amount=amount,
+            currency=ctx.account.currency,
             description=desc,
             reference=(row.get("reference") or "").strip(),
             counterparty=(row.get("counterparty") or "").strip(),
