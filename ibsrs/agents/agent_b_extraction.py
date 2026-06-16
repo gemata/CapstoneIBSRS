@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 from ibsrs.policy import Policy
@@ -42,6 +43,26 @@ def _convert_currency(amount: float, from_currency: str, ctx: ContextPacket) -> 
     account_rate = _rate_to_base(account_currency, ctx)
 
     return round(amount_in_base / account_rate, 2)
+
+def _normalize_date(value: str) -> str:
+    value = str(value).strip()
+
+    formats = [
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%d-%m-%Y",
+        "%Y/%m/%d",
+        "%d.%m.%Y",
+    ]
+
+    for fmt in formats:
+        try:
+            return datetime.strptime(value, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    raise ValueError(f"Unsupported date format: {value}")
 
 _MT940_TXN = re.compile(
     r"^:61:(\d{6})(\d{4})?([CD])(\d+[,\.]\d*)([A-Z]{4})?([^/]*)(//.*)?$"
@@ -159,7 +180,7 @@ def _parse_csv(stmt_path: Path, ctx: ContextPacket, policy: Policy,
         amount = _convert_currency(raw_amount, raw_currency, ctx)
         txns.append(_txn_from_row(
             txn_id=f"B-{n:04d}",
-            date=row["date"].strip(),
+            date=_normalize_date(row["date"]),
             amount=amount,
             currency=ctx.account.currency,
             description=desc,
@@ -230,7 +251,7 @@ def _parse_pdf_or_synthetic(stmt_path: Path, ctx: ContextPacket, policy: Policy,
             bbox = row.get("bbox", [0, 0, 0, 0])
             txns.append(_txn_from_row(
                 txn_id=f"B-{n:04d}",
-                date=row["date"],
+                date=_normalize_date(row["date"]),  
                 amount=round(float(row["amount"]), 2),
                 currency=row.get("currency", ctx.account.currency),
                 description=desc,
