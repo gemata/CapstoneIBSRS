@@ -19,6 +19,37 @@ _TYPE_KEYWORDS = [
     ("TRANSFER", ["TRANSFER", "XFER", "SWEEP"]),
 ]
 
+_TYPE_KEYWORDS = [
+    ("FEE", ["FEE", "SERVICE CHARGE", "MAINTENANCE", "WIRE CHARGE", "CHARGE"]),
+    ("INTEREST", ["INTEREST"]),
+    ("CHECK", ["CHECK", "CHEQUE", "CHK"]),
+    ("ACH", ["ACH", "DIRECT DEP", "PAYROLL", "VENDOR PAY"]),
+    ("WIRE", ["WIRE", "SWIFT", "TT "]),
+    ("TRANSFER", ["TRANSFER", "XFER", "SWEEP"]),
+]
+
+
+def _classify(description: str) -> str:
+    up = description.upper()
+    for txn_type, keys in _TYPE_KEYWORDS:
+        if any(k in up for k in keys):
+            return txn_type
+    return "OTHER"
+
+
+def _confidence(description: str, review_threshold: float) -> tuple[float, bool]:
+    """Truncated/ambiguous descriptions get reduced confidence (spec item B.2)."""
+    conf = 1.0
+    if description.endswith(("...", "..", "~")):
+        conf -= 0.30
+    if len(description.strip()) < 8:
+        conf -= 0.15
+    if re.search(r"\bUNKNOWN\b|\bMISC\b|\?\?", description.upper()):
+        conf -= 0.10
+    conf = round(max(conf, 0.05), 2)
+    return conf, conf < review_threshold
+
+
 
 def _parse_csv(stmt_path: Path, ctx: ContextPacket, review_threshold: float
                ) -> list[BankTransaction]:
