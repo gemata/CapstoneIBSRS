@@ -11,3 +11,7 @@ thresholds:
   high_value: 10000.0
   auto_journal_max: 500.0
   extraction_review_confidence: 0.80
+
+extraction:
+  min_description_length: 8
+  truncated_field_lengths: [22, 40]

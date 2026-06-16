@@ -73,7 +73,8 @@ class BankTransaction(BaseModel):
     counterparty: str = ""
     txn_type: str = "" 
     confidence: float = 1.0
-    needs_review: bool = False  
+    needs_review: bool = False
+    review_reasons: list[str] = Field(default_factory=list)
     evidence: Evidence
 
 
