@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -84,6 +85,156 @@ def _classify(description: str) -> str:
         if any(k in up for k in keys):
             return txn_type
     return "OTHER"
+
+
+def _balance_tolerance(policy: Policy) -> float:
+    return float(policy.get("extraction.balance_tolerance_abs", 0.005))
+
+
+def _row_fingerprint(row: dict) -> tuple:
+    return (
+        row.get("date", ""),
+        round(float(row.get("amount", 0)), 2),
+        (row.get("reference") or "").strip(),
+        (row.get("description") or "").strip()[:40],
+    )
+
+
+def _sort_pdf_rows(rows: list[dict]) -> list[dict]:
+    def sort_key(row: dict) -> tuple:
+        page = int(row.get("page", 1))
+        bbox = row.get("bbox", [0, 0, 0, 0])
+        y = bbox[1] if len(bbox) > 1 else 0
+        return (page, -y)
+
+    return sorted(rows, key=sort_key)
+
+
+def _dedupe_pdf_rows(rows: list[dict]) -> tuple[list[dict], int]:
+    seen: set[tuple] = set()
+    deduped: list[dict] = []
+    removed = 0
+    for row in rows:
+        fp = _row_fingerprint(row)
+        if fp in seen:
+            removed += 1
+            continue
+        seen.add(fp)
+        deduped.append(row)
+    return deduped, removed
+
+
+def _validate_page_balance_chain(
+    page_summaries: list[dict],
+    opening: float,
+    closing: float,
+    tolerance: float,
+) -> list[str]:
+    if not page_summaries:
+        return []
+
+    errors: list[str] = []
+    first = page_summaries[0]
+    last = page_summaries[-1]
+    if abs(float(first["opening_balance"]) - opening) > tolerance:
+        errors.append(
+            f"Page 1 opening {float(first['opening_balance']):,.2f} "
+            f"does not match statement opening {opening:,.2f}")
+    for i in range(len(page_summaries) - 1):
+        cur_close = float(page_summaries[i]["closing_balance"])
+        next_open = float(page_summaries[i + 1]["opening_balance"])
+        if abs(cur_close - next_open) > tolerance:
+            errors.append(
+                f"Page {page_summaries[i]['page']} closing {cur_close:,.2f} "
+                f"does not carry to page {page_summaries[i + 1]['page']} "
+                f"opening {next_open:,.2f}")
+    if abs(float(last["closing_balance"]) - closing) > tolerance:
+        errors.append(
+            f"Final page closing {float(last['closing_balance']):,.2f} "
+            f"does not match statement closing {closing:,.2f}")
+    return errors
+
+
+def _validate_page_txn_totals(
+    rows: list[dict],
+    page_summaries: list[dict],
+    tolerance: float,
+) -> list[str]:
+    by_page: dict[int, list[dict]] = defaultdict(list)
+    for row in rows:
+        by_page[int(row.get("page", 1))].append(row)
+
+    errors: list[str] = []
+    for summary in page_summaries:
+        page = int(summary["page"])
+        page_open = float(summary["opening_balance"])
+        page_close = float(summary["closing_balance"])
+        net = round(sum(float(r["amount"]) for r in by_page.get(page, [])), 2)
+        computed = round(page_open + net, 2)
+        if abs(computed - page_close) > tolerance:
+            errors.append(
+                f"Page {page} roll-forward mismatch: opening {page_open:,.2f} + "
+                f"net {net:,.2f} = {computed:,.2f} vs page closing {page_close:,.2f}")
+    return errors
+
+
+def _aggregate_pdf_rows(
+    rows: list[dict],
+    sidecar: dict,
+    ctx: ContextPacket,
+    policy: Policy,
+    audit: AuditLog,
+) -> tuple[list[dict], list[str]]:
+    """Sort, dedupe, and validate multi-page PDF extraction rows."""
+    sorted_rows = _sort_pdf_rows(rows)
+    deduped, dup_count = _dedupe_pdf_rows(sorted_rows)
+    pages = sorted({int(r.get("page", 1)) for r in deduped})
+    audit.step(
+        f"PDF aggregation across {len(pages)} page(s): {len(deduped)} unique rows"
+        + (f" ({dup_count} duplicate row(s) removed at page boundaries)"
+           if dup_count else ""))
+
+    tolerance = _balance_tolerance(policy)
+    opening = float(sidecar.get("opening_balance", ctx.account.opening_balance))
+    closing = float(sidecar.get("closing_balance", ctx.account.closing_balance))
+    page_summaries = sidecar.get("page_summaries", [])
+
+    warnings: list[str] = []
+    warnings.extend(_validate_page_balance_chain(
+        page_summaries, opening, closing, tolerance))
+    if page_summaries:
+        warnings.extend(_validate_page_txn_totals(deduped, page_summaries, tolerance))
+
+    computed = round(opening + sum(float(r["amount"]) for r in deduped), 2)
+    if abs(computed - closing) > tolerance:
+        warnings.append(
+            f"Aggregated document roll-forward mismatch: opening {opening:,.2f} + "
+            f"net {computed - opening:,.2f} = {computed:,.2f} vs closing {closing:,.2f}")
+    if abs(computed - ctx.account.closing_balance) > tolerance:
+        warnings.append(
+            f"Aggregated closing {computed:,.2f} does not match manifest closing "
+            f"{ctx.account.closing_balance:,.2f}")
+
+    for warning in warnings:
+        audit.decision(warning, "Multi-page PDF balance consistency check")
+
+    if not warnings and page_summaries:
+        audit.decision(
+            "Multi-page PDF balances reconcile across all pages and statement totals",
+            "Per-page carry-forward and document roll-forward within tolerance")
+
+    return deduped, warnings
+
+
+def _statement_rollforward(
+    opening: float,
+    closing: float,
+    txns: list[BankTransaction],
+    policy: Policy,
+) -> tuple[float, bool]:
+    tolerance = _balance_tolerance(policy)
+    computed = round(opening + sum(t.amount for t in txns), 2)
+    return computed, abs(computed - closing) < tolerance
 
 
 def _assess_description(
@@ -236,22 +387,26 @@ def _parse_mt940(stmt_path: Path, ctx: ContextPacket, policy: Policy,
 
 def _parse_pdf_or_synthetic(stmt_path: Path, ctx: ContextPacket, policy: Policy,
                             review_threshold: float, audit: AuditLog
-                            ) -> tuple[list[BankTransaction], bool]:
+                            ) -> tuple[list[BankTransaction], bool, list[str]]:
     """Born-digital PDFs ship a sidecar text-layer JSON (<stem>.extracted.json)
     with rows + bounding boxes. Without it, fall back to deterministic
     synthetic data seeded from account+period (spec: synthetic-data fallback)."""
-    sidecar = stmt_path.with_suffix(".extracted.json")
+    sidecar_path = stmt_path.with_suffix(".extracted.json")
     txns: list[BankTransaction] = []
-    if sidecar.exists():
-        rows = json.loads(sidecar.read_text(encoding="utf-8"))["rows"]
+    balance_warnings: list[str] = []
+    if sidecar_path.exists():
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        rows, balance_warnings = _aggregate_pdf_rows(
+            sidecar.get("rows", []), sidecar, ctx, policy, audit)
         audit.step(
-            f"PDF text layer found ({sidecar.name}); {len(rows)} rows with bounding boxes")
+            f"PDF text layer found ({sidecar_path.name}); "
+            f"{len(rows)} aggregated rows with bounding boxes")
         for n, row in enumerate(rows, 1):
             desc = row["description"]
             bbox = row.get("bbox", [0, 0, 0, 0])
             txns.append(_txn_from_row(
                 txn_id=f"B-{n:04d}",
-                date=_normalize_date(row["date"]),  
+                date=_normalize_date(row["date"]),
                 amount=round(float(row["amount"]), 2),
                 currency=row.get("currency", ctx.account.currency),
                 description=desc,
@@ -265,7 +420,7 @@ def _parse_pdf_or_synthetic(stmt_path: Path, ctx: ContextPacket, policy: Policy,
                 review_threshold=review_threshold,
                 policy=policy,
             ))
-        return txns, False
+        return txns, False, balance_warnings
 
     audit.decision("No PDF text layer; using deterministic synthetic fallback",
                    "Seeded from account_id+period so re-runs are identical")
@@ -292,7 +447,7 @@ def _parse_pdf_or_synthetic(stmt_path: Path, ctx: ContextPacket, policy: Policy,
             review_threshold=review_threshold,
             policy=policy,
         ))
-    return txns, True
+    return txns, True, balance_warnings
 
 
 def run_agent_b(ctx: ContextPacket, run_dir: Path, policy: Policy,
@@ -302,26 +457,38 @@ def run_agent_b(ctx: ContextPacket, run_dir: Path, policy: Policy,
     stmt_path = Path(ctx.files["bank_statement"])
     review_threshold = float(policy.get("thresholds.extraction_review_confidence", 0.8))
     synthetic = False
+    pdf_balance_warnings: list[str] = []
 
     if ctx.account.statement_format == "csv":
         txns = _parse_csv(stmt_path, ctx, policy, review_threshold)
     elif ctx.account.statement_format == "mt940":
         txns = _parse_mt940(stmt_path, ctx, policy, review_threshold)
     else:
-        txns, synthetic = _parse_pdf_or_synthetic(
+        txns, synthetic, pdf_balance_warnings = _parse_pdf_or_synthetic(
             stmt_path, ctx, policy, review_threshold, audit)
 
     audit.step(f"Extracted {len(txns)} transactions from {stmt_path.name} "
                f"({ctx.account.statement_format.upper()})")
 
-    computed_closing = round(ctx.account.opening_balance + sum(t.amount for t in txns), 2)
-    reconciles = abs(computed_closing - ctx.account.closing_balance) < 0.005
+    computed_closing, reconciles = _statement_rollforward(
+        ctx.account.opening_balance, ctx.account.closing_balance, txns, policy)
     audit.decision(
         f"Balance roll-forward: opening {ctx.account.opening_balance:,.2f} + "
         f"net movement = {computed_closing:,.2f}; statement closing "
         f"{ctx.account.closing_balance:,.2f} -> "
         f"{'RECONCILES' if reconciles else 'DOES NOT RECONCILE'}",
         "Sum of extracted amounts checked against statement closing balance")
+
+    for i, warning in enumerate(pdf_balance_warnings, 1):
+        findings.append(Finding(
+            finding_id=f"B-BAL-PDF-{i:03d}", agent="B",
+            category="pdf_balance_mismatch", severity="high", confidence=1.0,
+            title="Multi-page PDF balance inconsistency",
+            detail=warning,
+            evidence=[Evidence(source_file=stmt_path.name, locator="pdf_aggregation",
+                               snippet=warning[:120])],
+            recommendation="Verify page extraction completeness and page carry-forward balances",
+        ))
 
     if not reconciles:
         findings.append(Finding(
