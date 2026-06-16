@@ -69,6 +69,29 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
         gl_opening_balance=float(acct_cfg["gl_opening_balance"])
         if "gl_opening_balance" in acct_cfg else None,
     )
+    required_gl_accounts = [
+    "cash",
+    "bank_fees",
+    "interest_income",
+    "fx_gain_loss",
+    "suspense",
+    ]
+
+    gl_account_map = manifest.get("gl_account_map", {})
+    missing_gl_accounts = [
+        key for key in required_gl_accounts
+        if key not in gl_account_map
+    ]
+
+    if missing_gl_accounts:
+        raise ValueError(
+            f"Missing GL account mapping(s) in manifest: {', '.join(missing_gl_accounts)}"
+        )
+
+    audit.step(
+        "Loaded GL account map: "
+        + ", ".join(f"{key}={gl_account_map[key]}" for key in required_gl_accounts)
+    )
 
     # --- prior period reconciliation
     prior_closing = None
@@ -159,7 +182,7 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
     context = ContextPacket(
         run_id=run_id, bundle_path=str(bundle_dir), account=account,
         prior_period_closing_balance=prior_closing,
-        gl_account_map=manifest.get("gl_account_map", {}),
+        gl_account_map=gl_account_map,        
         bank_fee_schedule=fee_schedule, fx_rates=fx_rates,
         evidence_index=evidence_index, risk_flags=risk_flags, files=files,
     )
