@@ -1,0 +1,22 @@
+bundle_id: SC05-FX
+description: FX revaluation difference on foreign currency (EUR) account - adjustment.
+account:
+  account_id: EU-005-3309
+  account_name: EUR Operating Account
+  bank_name: Continental Bank
+  currency: EUR
+  period: 2026-05
+  opening_balance: 22000.0
+  closing_balance: 26181.6
+files:
+  bank_statement: bank_statement.csv
+  gl_export: gl_export.csv
+  prior_recon: prior_recon.json
+  bank_fee_schedule: bank_fee_schedule.csv
+  fx_rates: fx_rates.csv
+gl_account_map:
+  cash: 1010:Cash - Operating
+  bank_fees: 6210:Bank Fees Expense
+  interest_income: 4210:Interest Income
+  fx_gain_loss: 7150:FX Gain/Loss
+  suspense: 1999:Suspense Clearing

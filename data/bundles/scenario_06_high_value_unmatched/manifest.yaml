@@ -1,0 +1,23 @@
+bundle_id: SC06-HIGHVAL
+description: High-value unmatched wire above materiality - controller escalation.
+  Also shows 1:M matching (one deposit split across two GL postings).
+account:
+  account_id: US-006-8812
+  account_name: Treasury Account
+  bank_name: First National
+  currency: USD
+  period: 2026-05
+  opening_balance: 64000.0
+  closing_balance: 57550.0
+files:
+  bank_statement: bank_statement.csv
+  gl_export: gl_export.csv
+  prior_recon: prior_recon.json
+  bank_fee_schedule: bank_fee_schedule.csv
+  fx_rates: fx_rates.csv
+gl_account_map:
+  cash: 1010:Cash - Operating
+  bank_fees: 6210:Bank Fees Expense
+  interest_income: 4210:Interest Income
+  fx_gain_loss: 7150:FX Gain/Loss
+  suspense: 1999:Suspense Clearing

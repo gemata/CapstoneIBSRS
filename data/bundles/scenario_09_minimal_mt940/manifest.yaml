@@ -1,0 +1,22 @@
+bundle_id: SC09-MINIMAL
+description: Clean low-activity account (MT940 format) with two transactions.
+account:
+  account_id: US-009-7782
+  account_name: Petty Operations Account
+  bank_name: First National
+  currency: USD
+  period: 2026-05
+  opening_balance: 6500.0
+  closing_balance: 7580.0
+files:
+  bank_statement: bank_statement.mt940
+  gl_export: gl_export.csv
+  prior_recon: prior_recon.json
+  bank_fee_schedule: bank_fee_schedule.csv
+  fx_rates: fx_rates.csv
+gl_account_map:
+  cash: 1010:Cash - Operating
+  bank_fees: 6210:Bank Fees Expense
+  interest_income: 4210:Interest Income
+  fx_gain_loss: 7150:FX Gain/Loss
+  suspense: 1999:Suspense Clearing

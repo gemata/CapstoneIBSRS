@@ -1,0 +1,24 @@
+{
+  "closing_balance_bank": 27600.0,
+  "closing_balance_gl": 25750.0,
+  "outstanding_items": [
+    {
+      "amount": -1850.0,
+      "category": "outstanding_check",
+      "date": "2026-04-22",
+      "description": "CHECK 2041 - GREENFIELD MAINTENANCE",
+      "item_id": "CHK-2041",
+      "reference": "CHK2041"
+    }
+  ],
+  "period": "2026-04",
+  "transactions": [
+    {
+      "amount": 2750.0,
+      "date": "2026-04-18",
+      "description": "CUSTOMER PAYMENT APRIL",
+      "reference": "INV-0418",
+      "txn_id": "P-0001"
+    }
+  ]
+}
