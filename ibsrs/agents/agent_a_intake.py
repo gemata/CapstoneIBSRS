@@ -69,29 +69,6 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
         gl_opening_balance=float(acct_cfg["gl_opening_balance"])
         if "gl_opening_balance" in acct_cfg else None,
     )
-    required_gl_accounts = [
-    "cash",
-    "bank_fees",
-    "interest_income",
-    "fx_gain_loss",
-    "suspense",
-    ]
-
-    gl_account_map = manifest.get("gl_account_map", {})
-    missing_gl_accounts = [
-        key for key in required_gl_accounts
-        if key not in gl_account_map
-    ]
-
-    if missing_gl_accounts:
-        raise ValueError(
-            f"Missing GL account mapping(s) in manifest: {', '.join(missing_gl_accounts)}"
-        )
-
-    audit.step(
-        "Loaded GL account map: "
-        + ", ".join(f"{key}={gl_account_map[key]}" for key in required_gl_accounts)
-    )
 
     # --- prior period reconciliation
     prior_closing = None
@@ -103,7 +80,7 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
         audit.step(f"Loaded prior period reconciliation ({prior.get('period')}), "
                    f"closing balance {prior_closing:,.2f}")
 
-    # bank fee schedule & FX rates
+    # --- bank fee schedule & FX rates
     fee_schedule: list[dict] = []
     if "bank_fee_schedule" in files and Path(files["bank_fee_schedule"]).exists():
         fee_schedule = _read_csv_rows(Path(files["bank_fee_schedule"]))
@@ -115,20 +92,20 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
             fx_rates[row["currency"]] = float(row["rate_to_base"])
         audit.step(f"Loaded FX rates for {sorted(fx_rates)}")
 
-    #  universal evidence index
+    # --- universal evidence index
     evidence_index: list[Evidence] = []
     if fmt in ("csv", "mt940"):
         for i, line in enumerate(stmt_path.read_text(encoding="utf-8").splitlines(), 1):
             if line.strip() and not line.startswith("#"):
                 evidence_index.append(Evidence(
                     source_file=stmt_path.name, locator=f"line:{i}", snippet=line[:120]))
-    else:  # pdf - page-level pointers;
+    else:  # pdf - page-level pointers; Agent B adds bounding boxes
         evidence_index.append(Evidence(source_file=stmt_path.name,
                                        locator="page:1", snippet="(PDF statement)"))
     audit.step(
         f"Built evidence index with {len(evidence_index)} source pointers")
 
-    # risk heuristics
+    # --- risk heuristics
     risk_flags: list[RiskFlag] = []
     high_value = float(policy.get("thresholds.high_value", 10000.0))
 
@@ -182,7 +159,7 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
     context = ContextPacket(
         run_id=run_id, bundle_path=str(bundle_dir), account=account,
         prior_period_closing_balance=prior_closing,
-        gl_account_map=gl_account_map,        
+        gl_account_map=manifest.get("gl_account_map", {}),
         bank_fee_schedule=fee_schedule, fx_rates=fx_rates,
         evidence_index=evidence_index, risk_flags=risk_flags, files=files,
     )
