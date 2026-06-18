@@ -1,0 +1,17 @@
+HOW TO UPLOAD THIS PAIR  (MT940 statement + CSV general ledger)
+============================================================
+
+3 of 4 bank lines match the GL. The bank's $45 monthly service charge was never booked in the ledger.
+
+In the Streamlit sidebar -> 'Upload statement':
+  1. Bank statement box  ->  bank_statement.mt940
+  2. GL export box       ->  gl_export.csv     <-- enables matching!
+  3. Account ID          ->  UPL-MT940-FEE
+  4. Currency / Period   ->  USD / 2026-05
+  5. Leave 'Auto-detect opening/closing' ON (opening 25,000.00, closing 30,355.00 read from the file)
+  6. Click 'Upload & run'.
+
+EXPECTED RESULT:
+  75% match -> CLOSED_WITH_ADJUSTMENTS: the $45 bank fee (not in the GL) becomes an auto journal entry.
+
+Upload the statement WITHOUT gl_export.csv and you get 0% (statement-only analysis - nothing to match against).

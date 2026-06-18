@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import csv
@@ -37,22 +36,18 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
 
     manifest_path = bundle_dir / "manifest.yaml"
     if not manifest_path.exists():
-        raise FileNotFoundError(
-            f"Recon Bundle has no manifest.yaml: {bundle_dir}")
+        raise FileNotFoundError(f"Recon Bundle has no manifest.yaml: {bundle_dir}")
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-    audit.step(
-        f"Loaded manifest for bundle `{manifest.get('bundle_id', bundle_dir.name)}`")
+    audit.step(f"Loaded manifest for bundle `{manifest.get('bundle_id', bundle_dir.name)}`")
 
-    files = {k: str(bundle_dir / v)
-             for k, v in manifest.get("files", {}).items()}
+    files = {k: str(bundle_dir / v) for k, v in manifest.get("files", {}).items()}
     stmt_path = Path(files["bank_statement"])
     if not stmt_path.exists():
         raise FileNotFoundError(f"Bank statement missing: {stmt_path}")
 
     fmt = _sniff_format(stmt_path)
     if fmt == "unknown":
-        raise ValueError(
-            f"Unsupported/corrupt statement format: {stmt_path.name}")
+        raise ValueError(f"Unsupported/corrupt statement format: {stmt_path.name}")
     audit.decision(f"Classified statement `{stmt_path.name}` as **{fmt.upper()}**",
                    "Extension and content sniffing (MT940 tags / CSV header / PDF magic)")
 
@@ -70,17 +65,16 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
         if "gl_opening_balance" in acct_cfg else None,
     )
 
-    # --- prior period reconciliation
+    # --- prior period reconciliation -------------------------------------
     prior_closing = None
     if "prior_recon" in files and Path(files["prior_recon"]).exists():
         import json
-        prior = json.loads(
-            Path(files["prior_recon"]).read_text(encoding="utf-8"))
+        prior = json.loads(Path(files["prior_recon"]).read_text(encoding="utf-8"))
         prior_closing = float(prior.get("closing_balance_bank", 0.0))
         audit.step(f"Loaded prior period reconciliation ({prior.get('period')}), "
                    f"closing balance {prior_closing:,.2f}")
 
-    # --- bank fee schedule & FX rates
+    # --- bank fee schedule & FX rates -------------------------------------
     fee_schedule: list[dict] = []
     if "bank_fee_schedule" in files and Path(files["bank_fee_schedule"]).exists():
         fee_schedule = _read_csv_rows(Path(files["bank_fee_schedule"]))
@@ -92,7 +86,7 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
             fx_rates[row["currency"]] = float(row["rate_to_base"])
         audit.step(f"Loaded FX rates for {sorted(fx_rates)}")
 
-    # --- universal evidence index
+    # --- universal evidence index -----------------------------------------
     evidence_index: list[Evidence] = []
     if fmt in ("csv", "mt940"):
         for i, line in enumerate(stmt_path.read_text(encoding="utf-8").splitlines(), 1):
@@ -102,10 +96,9 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
     else:  # pdf - page-level pointers; Agent B adds bounding boxes
         evidence_index.append(Evidence(source_file=stmt_path.name,
                                        locator="page:1", snippet="(PDF statement)"))
-    audit.step(
-        f"Built evidence index with {len(evidence_index)} source pointers")
+    audit.step(f"Built evidence index with {len(evidence_index)} source pointers")
 
-    # --- risk heuristics
+    # --- risk heuristics ----------------------------------------------------
     risk_flags: list[RiskFlag] = []
     high_value = float(policy.get("thresholds.high_value", 10000.0))
 
@@ -114,7 +107,7 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
         risk_flags.append(RiskFlag(
             code="FX_EXPOSURE",
             detail=f"Foreign-currency account ({account.currency}, "
-            f"rate to base {rate}); revaluation exposure at period end",
+                   f"rate to base {rate}); revaluation exposure at period end",
             severity="medium"))
 
     if fmt == "csv":
@@ -127,7 +120,9 @@ def run_agent_a(bundle_dir: Path, run_dir: Path, run_id: str,
         for r in rows:
             try:
                 if abs(float(r["amount"])) >= high_value:
-                    # Informational gatekeeper flag for unusually large transactions
+                    # Informational gatekeeper flag: escalation only happens in
+                    # Agent H if the item is also UNMATCHED above materiality -
+                    # a cleanly matched high-value txn must not block a clean close.
                     risk_flags.append(RiskFlag(
                         code="HIGH_VALUE",
                         detail=f"{r['date']} {r['description'][:40]} amount {float(r['amount']):,.2f}",

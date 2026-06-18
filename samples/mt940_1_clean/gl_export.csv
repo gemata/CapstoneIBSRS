@@ -1,0 +1,4 @@
+gl_id,date,account_code,description,reference,amount
+G001,2026-05-04,1010,AR receipt Harbor Works,INV7710,3500.00
+G002,2026-05-15,1010,AP payment Summit Tools,PO9921,-2100.00
+G003,2026-05-28,1010,AR receipt Orbit Media,INV7720,1800.00

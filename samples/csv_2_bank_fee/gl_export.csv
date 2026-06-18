@@ -1,0 +1,4 @@
+gl_id,date,account_code,description,reference,amount
+G001,2026-05-02,1010,AR receipt Acme Corp,INV2201,5000.00
+G002,2026-05-08,1010,AP payment Blue Office,PO7741,-1800.00
+G003,2026-05-16,1010,AR receipt Riverside,INV2210,2200.00

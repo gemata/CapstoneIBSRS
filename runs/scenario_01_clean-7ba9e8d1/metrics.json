@@ -1,5 +1,24 @@
 {
-  "deterministic_hash": "3d2d9215fde5fca2",
-  "finished_at": "2026-06-12T15:32:03Z",
-  "started_at": "2026-06-12T15:32:03Z"
+  "ai_assisted_matches": 0,
+  "ai_enabled": true,
+  "auto_resolved": 0,
+  "bank_txn_count": 5,
+  "deterministic_hash": "d42f5c89f1d73464",
+  "duplicate_groups": 0,
+  "duration_seconds": 5.0,
+  "embeddings_available": true,
+  "exception_count": 0,
+  "exception_rate": 0.0,
+  "extraction_avg_confidence": 1.0,
+  "finished_at": "2026-06-18T15:08:38Z",
+  "gl_entry_count": 5,
+  "journal_entries": 0,
+  "llm_available": true,
+  "llm_calls": 1,
+  "match_rate_bank": 1.0,
+  "match_rate_gl": 1.0,
+  "needs_human_review": 0,
+  "run_id": "scenario_01_clean-7ba9e8d1",
+  "semantic_match_rate": 0.0,
+  "started_at": "2026-06-18T15:08:33Z"
 }

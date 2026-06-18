@@ -1,16 +1,17 @@
-
 from __future__ import annotations
 
 from typing import Optional
 from pydantic import BaseModel, Field
-------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# Evidence & findings (unified findings schema, Part Four of the spec)
+# ---------------------------------------------------------------------------
 
 class Evidence(BaseModel):
     """Pointer that lets an auditor trace a conclusion back to its source."""
     source_file: str
-    # e.g. "row:14" for CSV, "line:62" for MT940, "page:1,bbox:[72,540,310,556]" for PDF
-    locator: str
+    locator: str  # e.g. "row:14" for CSV, "line:62" for MT940, "page:1,bbox:[72,540,310,556]" for PDF
     snippet: str = ""
 
 
@@ -42,8 +43,7 @@ class AccountMeta(BaseModel):
     statement_format: str  # csv | mt940 | pdf
     opening_balance: float
     closing_balance: float
-    # book opening, if != bank opening
-    gl_opening_balance: Optional[float] = None
+    gl_opening_balance: Optional[float] = None  # book opening, if != bank opening
 
 
 class RiskFlag(BaseModel):
@@ -120,8 +120,7 @@ class MatchPair(BaseModel):
     score: float
     rationale: str
     semantic_score: Optional[float] = None  # sentence-transformers cosine (AI)
-    # deterministic lexical/token score
-    exact_score: Optional[float] = None
+    exact_score: Optional[float] = None      # deterministic lexical/token score
     ai_assisted: bool = False                # True if semantics decided the match
     evidence: list[Evidence] = Field(default_factory=list)
 
@@ -248,8 +247,7 @@ class AIInsights(BaseModel):
     ai_enabled: bool
     embeddings_available: bool
     llm_available: bool
-    # ready | no API key | invalid OpenAI API key (401) | ...
-    llm_state: str = ""
+    llm_state: str = ""  # ready | no API key | invalid OpenAI API key (401) | ...
     generated_by: str  # "gpt-4o" | "deterministic-template"
     ai_reasoning: str  # the "AI Reasoning" narrative shown in the audit log
     key_risks: list[str] = Field(default_factory=list)

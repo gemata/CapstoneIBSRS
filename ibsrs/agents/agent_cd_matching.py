@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import csv
 from datetime import date
 from itertools import combinations
@@ -140,7 +141,9 @@ def run_agents_cd(ctx: ContextPacket, txn_artifact: TransactionsArtifact,
                 break
 
     # Pass 3 - description matching (HYBRID: semantic + lexical).
-   
+    # The amount tolerance and date window remain hard deterministic guards -
+    # semantics can only choose among candidates that already match on money
+    # and timing, never override them.
     for b in bank:
         if b.txn_id in used_bank:
             continue

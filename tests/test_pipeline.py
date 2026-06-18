@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -33,8 +32,7 @@ def results(tmp_path_factory):
     for name in EXPECTED:
         # use_ai=False locks the deterministic baseline so the asserted outcomes
         # are hermetic whether or not the AI stack is installed in the test env.
-        out[name] = run_pipeline(
-            BUNDLES_DIR / name, runs_dir=runs_dir, use_ai=False)
+        out[name] = run_pipeline(BUNDLES_DIR / name, runs_dir=runs_dir, use_ai=False)
     return out
 
 
@@ -107,8 +105,7 @@ def test_one_to_many_match(results):
 def test_policy_changes_decisions(tmp_path):
     """Demo expectation: lowering materiality flips a clean-ish run to
     escalation - policy edits visibly change decisions without code edits."""
-    base = yaml.safe_load(
-        (ROOT / "policy" / "policy.yaml").read_text(encoding="utf-8"))
+    base = yaml.safe_load((ROOT / "policy" / "policy.yaml").read_text(encoding="utf-8"))
     strict = json.loads(json.dumps(base))
     strict["thresholds"]["materiality"] = 100.0  # tiny materiality
     strict_path = tmp_path / "strict_policy.yaml"
@@ -136,14 +133,11 @@ except Exception:
 def test_ai_fields_present_and_backward_compatible(results):
     """Even with AI off, the new additive fields exist and are inert."""
     r = results["scenario_01_clean"]
-    mr = json.loads(
-        (Path(r["run_dir"]) / "match_result.json").read_text("utf-8"))
+    mr = json.loads((Path(r["run_dir"]) / "match_result.json").read_text("utf-8"))
     assert "semantic_match_rate" in mr and mr["semantic_match_rate"] == 0.0
     assert all("semantic_score" in m for m in mr["matched"])
-    ai_ins = json.loads(
-        (Path(r["run_dir"]) / "ai_insights.json").read_text("utf-8"))
-    # no key in tests
-    assert ai_ins["generated_by"] == "deterministic-template"
+    ai_ins = json.loads((Path(r["run_dir"]) / "ai_insights.json").read_text("utf-8"))
+    assert ai_ins["generated_by"] == "deterministic-template"  # no key in tests
     assert ai_ins["ai_reasoning"]  # narrative always populated
     assert (Path(r["run_dir"]) / "llm_calls.log").exists()
 
@@ -173,8 +167,7 @@ def test_upload_creates_distinct_folders(tmp_path, monkeypatch):
     assert up(stmt_b, "ACC-B").status_code == 200
     assert up(stmt_a, "ACC-A").status_code == 200  # identical re-upload
     folders = sorted((tmp_path / "uploads").glob("upload_*"))
-    assert len(
-        folders) == 2, f"expected 2 distinct upload folders, got {folders}"
+    assert len(folders) == 2, f"expected 2 distinct upload folders, got {folders}"
     # each is a complete bundle (parity with curated bundles)
     for f in folders:
         for name in ("bank_statement.csv", "gl_export.csv", "manifest.yaml",
@@ -190,8 +183,7 @@ def test_semantic_matching_preserves_outcomes(tmp_path, monkeypatch):
     free and offline, never billing a real OpenAI call."""
     monkeypatch.setattr("ibsrs.ai.runtime._read_api_key", lambda: "")
     for name, (status, exc, je) in EXPECTED.items():
-        r = run_pipeline(BUNDLES_DIR / name,
-                         runs_dir=tmp_path / name, use_ai=True)
+        r = run_pipeline(BUNDLES_DIR / name, runs_dir=tmp_path / name, use_ai=True)
         assert r["status"] == status, f"{name} flipped to {r['status']} with AI on"
         assert r["exceptions"] == exc and r["journal_entries"] == je
         assert r["ai_status"]["embeddings_available"] is True

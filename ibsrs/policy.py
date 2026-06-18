@@ -1,12 +1,10 @@
-
 from __future__ import annotations
 
 from pathlib import Path
 
 import yaml
 
-DEFAULT_POLICY_PATH = Path(__file__).resolve(
-).parent.parent / "policy" / "policy.yaml"
+DEFAULT_POLICY_PATH = Path(__file__).resolve().parent.parent / "policy" / "policy.yaml"
 
 
 class Policy:

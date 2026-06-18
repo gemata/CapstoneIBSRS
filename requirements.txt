@@ -1,0 +1,21 @@
+# IBSRS - all dependencies (core + AI) in one file.
+# Install everything with:  pip install -r requirements.txt
+
+# --- core (FastAPI backend, Streamlit UI, deterministic pipeline) ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+streamlit>=1.33
+pydantic>=2.6
+pyyaml>=6.0
+pandas>=2.2
+requests>=2.31
+pytest>=8.0
+
+# --- AI layer (optional at runtime, but installed here for convenience) ---
+# The pipeline still runs fully without these (deterministic fallback);
+# they enable semantic matching (Agent C), LLM PDF extraction (Agent B),
+# and the GPT-4o audit-reasoning narrative (Agent H).
+sentence-transformers>=2.7   # local semantic matching (offline, free)
+openai>=1.40                 # LLM extraction + reasoning (needs OPENAI_API_KEY)
+python-dotenv>=1.0           # loads OPENAI_API_KEY from .env
+pypdf>=4.2                   # born-digital PDF text extraction

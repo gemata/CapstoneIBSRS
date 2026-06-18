@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import csv
@@ -15,8 +14,7 @@ OUT = ROOT / "samples" / "with_gl"
 def _write_gl(folder: Path, gl: list[tuple]) -> None:
     with open(folder / "gl_export.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh, lineterminator="\n")
-        w.writerow(["gl_id", "date", "account_code",
-                   "description", "reference", "amount"])
+        w.writerow(["gl_id", "date", "account_code", "description", "reference", "amount"])
         for (gid, dt, desc, ref, amt) in gl:
             w.writerow([gid, dt, "1010", desc, ref, f"{amt:.2f}"])
 
@@ -30,8 +28,7 @@ def _write_csv_stmt(folder: Path, currency: str, opening: float,
                     "amount", "currency", "running_balance"])
         for (dt, desc, ref, amt) in bank:
             running = round(running + amt, 2)
-            w.writerow(
-                [dt, desc, ref, "", f"{amt:.2f}", currency, f"{running:.2f}"])
+            w.writerow([dt, desc, ref, "", f"{amt:.2f}", currency, f"{running:.2f}"])
     return round(running, 2)
 
 
@@ -61,8 +58,7 @@ def _write_pdf_stmt(folder: Path, currency: str, opening: float, bank: list[tupl
     body = []
     for (dt, desc, ref, amt) in bank:
         running = round(running + amt, 2)
-        body.append(
-            f"{dt}  {desc[:38]:<38} {ref[:10]:<10} {amt:>11,.2f} {running:>12,.2f}")
+        body.append(f"{dt}  {desc[:38]:<38} {ref[:10]:<10} {amt:>11,.2f} {running:>12,.2f}")
     lines = ([bank_name, "Statement of Account", f"Account: {account}",
               "Statement Period: May 1, 2026 - May 31, 2026",
               f"Opening Balance: {opening:,.2f} {currency}", "",
@@ -79,8 +75,7 @@ def _write_pdf_stmt(folder: Path, currency: str, opening: float, bank: list[tupl
             b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
             b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 640 792] /Contents 4 0 R "
             b"/Resources << /Font << /F1 5 0 R >> >> >>",
-            b"<< /Length " + str(len(cb)).encode() +
-            b" >>\nstream\n" + cb + b"\nendstream",
+            b"<< /Length " + str(len(cb)).encode() + b" >>\nstream\n" + cb + b"\nendstream",
             b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>"]
     out = bytearray(b"%PDF-1.4\n")
     offs = []
@@ -159,20 +154,13 @@ DUP_STORY = ("The bank processed the Stellar Parts ACH ($4,250) TWICE (May 10 & 
 
 # (folder, fmt, account, currency, opening, bank, gl, story, expected)
 SCENARIOS = [
-    ("csv_1_clean", "csv", "UPL-CSV-CLEAN", "USD", 15000.00,
-     CLEAN_BANK, CLEAN_GL, CLEAN_STORY, CLEAN_EXP),
-    ("csv_2_bank_fee", "csv", "UPL-CSV-FEE", "USD",
-     20000.00, FEE_BANK, FEE_GL, FEE_STORY, FEE_EXP),
-    ("csv_3_duplicate", "csv", "UPL-CSV-DUP", "USD",
-     30000.00, DUP_BANK, DUP_GL, DUP_STORY, DUP_EXP),
-    ("mt940_1_clean", "mt940", "UPL-MT940-CLEAN", "USD",
-     18000.00, CLEAN_BANK, CLEAN_GL, CLEAN_STORY, CLEAN_EXP),
-    ("mt940_2_bank_fee", "mt940", "UPL-MT940-FEE", "USD",
-     25000.00, FEE_BANK, FEE_GL, FEE_STORY, FEE_EXP),
-    ("pdf_1_clean", "pdf", "UPL-PDF-CLEAN", "USD", 16000.00,
-     CLEAN_BANK, CLEAN_GL, CLEAN_STORY, CLEAN_EXP),
-    ("pdf_2_duplicate", "pdf", "UPL-PDF-DUP", "USD",
-     30000.00, DUP_BANK, DUP_GL, DUP_STORY, DUP_EXP),
+    ("csv_1_clean", "csv", "UPL-CSV-CLEAN", "USD", 15000.00, CLEAN_BANK, CLEAN_GL, CLEAN_STORY, CLEAN_EXP),
+    ("csv_2_bank_fee", "csv", "UPL-CSV-FEE", "USD", 20000.00, FEE_BANK, FEE_GL, FEE_STORY, FEE_EXP),
+    ("csv_3_duplicate", "csv", "UPL-CSV-DUP", "USD", 30000.00, DUP_BANK, DUP_GL, DUP_STORY, DUP_EXP),
+    ("mt940_1_clean", "mt940", "UPL-MT940-CLEAN", "USD", 18000.00, CLEAN_BANK, CLEAN_GL, CLEAN_STORY, CLEAN_EXP),
+    ("mt940_2_bank_fee", "mt940", "UPL-MT940-FEE", "USD", 25000.00, FEE_BANK, FEE_GL, FEE_STORY, FEE_EXP),
+    ("pdf_1_clean", "pdf", "UPL-PDF-CLEAN", "USD", 16000.00, CLEAN_BANK, CLEAN_GL, CLEAN_STORY, CLEAN_EXP),
+    ("pdf_2_duplicate", "pdf", "UPL-PDF-DUP", "USD", 30000.00, DUP_BANK, DUP_GL, DUP_STORY, DUP_EXP),
 ]
 
 
@@ -211,8 +199,7 @@ def main() -> None:
     print(f"Wrote {len(rows)} paired samples (CSV + MT940 + PDF) to "
           f"{OUT.relative_to(ROOT)}/")
     for (folder, fmt, acct, op, cl) in rows:
-        print(
-            f"  {folder:20} [{fmt:5}] {acct:18} open={op:>10,.2f} close={cl:>10,.2f}")
+        print(f"  {folder:20} [{fmt:5}] {acct:18} open={op:>10,.2f} close={cl:>10,.2f}")
 
 
 if __name__ == "__main__":

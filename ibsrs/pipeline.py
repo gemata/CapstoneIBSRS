@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import hashlib
@@ -64,7 +63,11 @@ def run_pipeline(bundle_dir: str | Path, policy_path: str | Path | None = None,
     # creates the OpenAI client lazily, opens llm_calls.log for this run).
     ai = AIRuntime(policy, run_dir=run_dir, use_ai=use_ai)
     audit.section("AI Runtime", "Hybrid capability detection")
-    audit.step(f"AI status: {ai.status}")
+    # Drop llm_calls from this startup snapshot: it is always 0 here (taken
+    # before any LLM call) and only confused readers. The real count is
+    # recorded later in metrics.json / ai_insights.json.
+    startup_status = {k: v for k, v in ai.status.items() if k != "llm_calls"}
+    audit.step(f"AI status: {startup_status}")
     all_findings: list[Finding] = []
 
     # Agent A - intake, context packet, evidence index, risk gating
@@ -76,8 +79,7 @@ def run_pipeline(bundle_dir: str | Path, policy_path: str | Path | None = None,
     all_findings += f_b
 
     # Agents C & D - GL matching (semantic + rule) + variance/timing analysis
-    match_result, f_cd = run_agents_cd(
-        ctx, txn_artifact, run_dir, policy, audit, ai=ai)
+    match_result, f_cd = run_agents_cd(ctx, txn_artifact, run_dir, policy, audit, ai=ai)
     all_findings += f_cd
 
     # Agent E - duplicate detection (100% rule-based, unchanged)
@@ -116,8 +118,7 @@ def list_bundles() -> list[dict]:
         for d in sorted(BUNDLES_DIR.iterdir()):
             if (d / "manifest.yaml").exists():
                 import yaml
-                m = yaml.safe_load(
-                    (d / "manifest.yaml").read_text(encoding="utf-8"))
+                m = yaml.safe_load((d / "manifest.yaml").read_text(encoding="utf-8"))
                 out.append({"name": d.name, "path": str(d),
                             "bundle_id": m.get("bundle_id", d.name),
                             "description": m.get("description", ""),
@@ -140,13 +141,11 @@ def list_runs(runs_dir: str | Path | None = None) -> list[dict]:
     return out
 
 
-# one-command demo: python -m ibsrs.pipeline [bundle]
-if __name__ == "__main__":
+if __name__ == "__main__":  # one-command demo: python -m ibsrs.pipeline [bundle]
     import sys
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
-    use_ai = True if "--ai" in flags else (
-        False if "--no-ai" in flags else None)
+    use_ai = True if "--ai" in flags else (False if "--no-ai" in flags else None)
 
     def _resolve(arg: str) -> Path:
         p = Path(arg)

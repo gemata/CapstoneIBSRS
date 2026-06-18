@@ -1,0 +1,4 @@
+gl_id,date,account_code,description,reference,amount
+G001,2026-05-03,1010,AR receipt Orion Retail,INV5501,7500.00
+G002,2026-05-10,1010,AP payment Stellar Parts,ACH7702,-4250.00
+G003,2026-05-20,1010,AR receipt Cedar,INV5510,3100.00

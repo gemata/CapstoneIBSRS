@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import csv
@@ -30,7 +29,7 @@ def _classify(description: str) -> str:
 
 
 def _confidence(description: str, review_threshold: float) -> tuple[float, bool]:
-    """Truncated/ambiguous descriptions get reduced confidence."""
+    """Truncated/ambiguous descriptions get reduced confidence (spec item B.2)."""
     conf = 1.0
     if description.endswith(("...", "..", "~")):
         conf -= 0.30
@@ -46,11 +45,9 @@ def _parse_csv(stmt_path: Path, ctx: ContextPacket, review_threshold: float
                ) -> list[BankTransaction]:
     txns: list[BankTransaction] = []
     lines = stmt_path.read_text(encoding="utf-8").splitlines()
-    header_idx = next(i for i, ln in enumerate(lines)
-                      if not ln.startswith("#"))
+    header_idx = next(i for i, ln in enumerate(lines) if not ln.startswith("#"))
     reader = csv.DictReader([ln for ln in lines if not ln.startswith("#")])
-    # first data row line number (0-based list, 1-based locator)
-    data_line = header_idx + 1
+    data_line = header_idx + 1  # first data row line number (0-based list, 1-based locator)
     n = 0
     for row in reader:
         # Skip malformed/summary rows (real statements often carry total lines)
@@ -83,8 +80,7 @@ def _parse_csv(stmt_path: Path, ctx: ContextPacket, review_threshold: float
     return txns
 
 
-_MT940_TXN = re.compile(
-    r"^:61:(\d{6})(\d{4})?([CD])(\d+[,.]?\d*)N(\w{3})(\S*)")
+_MT940_TXN = re.compile(r"^:61:(\d{6})(\d{4})?([CD])(\d+[,.]?\d*)N(\w{3})(\S*)")
 
 
 def _parse_mt940(stmt_path: Path, ctx: ContextPacket, review_threshold: float
@@ -133,8 +129,7 @@ def _extract_pdf_text(pdf_path: Path) -> str:
 # A transaction row in a born-digital statement: date, text, amount[, balance].
 _PDF_TXN = re.compile(
     r"^\s*(\d{4}-\d{2}-\d{2})\s+(.+?)\s+(-?[\d,]+\.\d{2})(?:\s+(-?[\d,]+\.\d{2}))?\s*$")
-# e.g. PAY0502, ACH7781, CHK3041
-_PDF_REF = re.compile(r"^[A-Z]{2,6}\d{2,}[A-Z0-9-]*$")
+_PDF_REF = re.compile(r"^[A-Z]{2,6}\d{2,}[A-Z0-9-]*$")  # e.g. PAY0502, ACH7781, CHK3041
 
 
 def _parse_pdf_born_digital(stmt_path: Path, ctx: ContextPacket,
@@ -247,8 +242,7 @@ def _parse_pdf_or_synthetic(stmt_path: Path, ctx: ContextPacket,
     txns: list[BankTransaction] = []
     if sidecar.exists():
         rows = json.loads(sidecar.read_text(encoding="utf-8"))["rows"]
-        audit.step(
-            f"PDF text layer found ({sidecar.name}); {len(rows)} rows with bounding boxes")
+        audit.step(f"PDF text layer found ({sidecar.name}); {len(rows)} rows with bounding boxes")
         for n, row in enumerate(rows, 1):
             desc = row["description"]
             conf, review = _confidence(desc, review_threshold)
@@ -273,8 +267,7 @@ def _parse_pdf_or_synthetic(stmt_path: Path, ctx: ContextPacket,
 
     # ---- HYBRID: LLM extraction for messy/scanned PDF text ----------------
     if ai is not None and getattr(ai, "llm_available", False):
-        llm_txns = _parse_pdf_with_llm(
-            stmt_path, ctx, review_threshold, audit, ai)
+        llm_txns = _parse_pdf_with_llm(stmt_path, ctx, review_threshold, audit, ai)
         if llm_txns:
             return llm_txns, False
 
@@ -287,8 +280,7 @@ def _parse_pdf_or_synthetic(stmt_path: Path, ctx: ContextPacket,
     descs = ["VENDOR PAYMENT ACME", "CUSTOMER DEPOSIT", "MONTHLY SERVICE FEE",
              "PAYROLL ACH BATCH", "WIRE IN - CLIENT"]
     for n in range(1, 6):
-        amt = round(((seed * n * 37) % 9000) / 10 + 25, 2) * \
-            (1 if n % 2 == 0 else -1)
+        amt = round(((seed * n * 37) % 9000) / 10 + 25, 2) * (1 if n % 2 == 0 else -1)
         desc = descs[(seed + n) % len(descs)]
         conf, review = _confidence(desc, review_threshold)
         txns.append(BankTransaction(
@@ -309,8 +301,7 @@ def run_agent_b(ctx: ContextPacket, run_dir: Path, policy: Policy,
     audit.section("Agent B", "Transaction Extraction")
     findings: list[Finding] = []
     stmt_path = Path(ctx.files["bank_statement"])
-    review_threshold = float(policy.get(
-        "thresholds.extraction_review_confidence", 0.8))
+    review_threshold = float(policy.get("thresholds.extraction_review_confidence", 0.8))
     synthetic = False
 
     if ctx.account.statement_format == "csv":
@@ -325,8 +316,7 @@ def run_agent_b(ctx: ContextPacket, run_dir: Path, policy: Policy,
                f"({ctx.account.statement_format.upper()})")
 
     # multi-page/statement-level aggregation: opening + sum(txns) vs closing
-    computed_closing = round(
-        ctx.account.opening_balance + sum(t.amount for t in txns), 2)
+    computed_closing = round(ctx.account.opening_balance + sum(t.amount for t in txns), 2)
     reconciles = abs(computed_closing - ctx.account.closing_balance) < 0.005
     audit.decision(
         f"Balance roll-forward: opening {ctx.account.opening_balance:,.2f} + "
@@ -354,7 +344,7 @@ def run_agent_b(ctx: ContextPacket, run_dir: Path, policy: Policy,
                 severity="medium", confidence=t.confidence,
                 title=f"Ambiguous/truncated description on {t.txn_id}",
                 detail=f"'{t.description}' scored {t.confidence:.2f} < "
-                f"{review_threshold:.2f} review threshold",
+                       f"{review_threshold:.2f} review threshold",
                 evidence=[t.evidence], related_txn_ids=[t.txn_id],
                 recommendation="Manual review before GL mapping",
                 open_question="What does this memo refer to?",

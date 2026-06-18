@@ -1,18 +1,49 @@
+# IBSRS Policy Pack
+# Operational constraints and rules. Edit values here (no code changes
+# needed) to visibly alter matching, triage, and escalation decisions.
+
 matching:
-  date_window_days: 3
-  amount_tolerance_abs: 0.05
-  amount_tolerance_pct: 0.001
-  fuzzy_description_threshold: 0.62
+  date_window_days: 3            # max day gap for amount+date matches
+  amount_tolerance_abs: 0.05     # absolute tolerance for amount equality
+  amount_tolerance_pct: 0.001    # relative tolerance (0.1%)
+  fuzzy_description_threshold: 0.62   # 0..1 token-similarity needed for fuzzy match
   enable_one_to_many: true
   one_to_many_max_parts: 4
 
-thresholds:
-  materiality: 5000.0
-  high_value: 10000.0
-  auto_journal_max: 500.0
-  extraction_review_confidence: 0.80
+duplicates:
+  near_amount_tolerance_abs: 0.05
+  near_date_window_days: 2       # tolerance across bank cut-off date
+  cross_period_lookback: true    # also compare against prior period txns
 
-extraction:
-  min_description_length: 8
-  truncated_field_lengths: [22, 40]
-  balance_tolerance_abs: 0.005
+thresholds:
+  materiality: 5000.0            # unmatched items above this escalate to controller
+  high_value: 10000.0            # Agent A risk flag
+  auto_journal_max: 500.0        # bank charges/interest auto-journaled up to this
+  extraction_review_confidence: 0.80   # below this -> needs_review
+
+compliance:
+  require_evidence_on_findings: true
+  sox_mode: true                 # every decision must carry rationale in audit log
+  mask_account_numbers: true     # privacy: only last 4 digits in human outputs
+
+fx:
+  revaluation_tolerance_abs: 25.0   # FX diffs under this booked as revaluation
+
+ai:
+  # Hybrid AI layer. The pipeline is deterministic-first: when a library or
+  # the OpenAI key is missing, every setting below no-ops and rule-based
+  # logic runs instead. None of these change the financial decision or the
+  # journal math (those stay 100% deterministic for SOX/auditability).
+  enabled: true                    # master switch for all AI features
+  semantic_match_threshold: 0.75   # min blended score for an AI-assisted match
+  semantic_weight: 0.7             # blend: semantic*w + lexical*(1-w) in Agent C
+  embedding_model: all-MiniLM-L6-v2   # local sentence-transformers (offline)
+  llm_extraction_model: gpt-4o-mini   # Agent B PDF extraction
+  llm_reasoning_model: gpt-4o         # Agent H audit-reasoning narrative
+  llm_max_retries: 2
+
+routing:
+  auto_journal: "Posted to suggested journal queue (auto)"
+  accountant: "Route to reconciliation accountant work queue"
+  controller: "Escalate to controller approval packet"
+  investigation: "Open investigation ticket - do not close period"

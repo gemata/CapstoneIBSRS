@@ -1,0 +1,46 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 640 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 816 >>
+stream
+BT /F1 9 Tf 30 760 Td 12 TL
+(UPL-PDF-CLEAN COMMUNITY BANK) Tj T*
+(Statement of Account) Tj T*
+(Account: UPL-PDF-CLEAN) Tj T*
+(Statement Period: May 1, 2026 - May 31, 2026) Tj T*
+(Opening Balance: 16,000.00 USD) Tj T*
+() Tj T*
+(Date        Description                            Ref               Amount      Balance) Tj T*
+(------------------------------------------------------------------------------------------------) Tj T*
+(2026-05-04  CUSTOMER PAYMENT - HARBOR WORKS        INV7710       3,500.00    19,500.00) Tj T*
+(2026-05-15  VENDOR PAYMENT - SUMMIT TOOLS          PO9921       -2,100.00    17,400.00) Tj T*
+(2026-05-28  CUSTOMER PAYMENT - ORBIT MEDIA         INV7720       1,800.00    19,200.00) Tj T*
+() Tj T*
+(                                                   Closing balance    19,200.00 USD) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000001108 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1176
+%%EOF
