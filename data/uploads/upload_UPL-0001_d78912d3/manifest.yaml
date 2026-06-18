@@ -1,0 +1,22 @@
+bundle_id: UPLOAD-UPL-0001-d78912d3
+description: Uploaded statement (bank_statement.mt940)
+account:
+  account_id: UPL-0001
+  account_name: Uploaded Account
+  bank_name: Uploaded Bank
+  currency: USD
+  period: 2026-05
+  opening_balance: 25000.0
+  closing_balance: 30355.0
+files:
+  bank_statement: bank_statement.mt940
+  gl_export: gl_export.csv
+  prior_recon: prior_recon.json
+  bank_fee_schedule: bank_fee_schedule.csv
+  fx_rates: fx_rates.csv
+gl_account_map:
+  cash: 1010:Cash - Operating
+  bank_fees: 6210:Bank Fees Expense
+  interest_income: 4210:Interest Income
+  fx_gain_loss: 7150:FX Gain/Loss
+  suspense: 1999:Suspense Clearing
