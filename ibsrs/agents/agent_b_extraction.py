@@ -1,10 +1,9 @@
+
 from __future__ import annotations
 
 import csv
 import json
 import re
-from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
 
 from ibsrs.policy import Policy
@@ -20,63 +19,6 @@ _TYPE_KEYWORDS = [
     ("WIRE", ["WIRE", "SWIFT", "TT "]),
     ("TRANSFER", ["TRANSFER", "XFER", "SWEEP"]),
 ]
-def _rate_to_base(currency: str, ctx: ContextPacket) -> float:
-    currency = currency.strip().upper()
-    account_currency = ctx.account.currency.strip().upper()
-
-    if currency == account_currency:
-        return 1.0
-
-    if currency in ctx.fx_rates:
-        return float(ctx.fx_rates[currency])
-
-    raise ValueError(f"Missing FX rate for {currency}")
-
-
-def _convert_currency(amount: float, from_currency: str, ctx: ContextPacket) -> float:
-    from_currency = from_currency.strip().upper()
-    account_currency = ctx.account.currency.strip().upper()
-
-    if from_currency == account_currency:
-        return round(amount, 2)
-
-    amount_in_base = amount * _rate_to_base(from_currency, ctx)
-    account_rate = _rate_to_base(account_currency, ctx)
-
-    return round(amount_in_base / account_rate, 2)
-
-def _normalize_date(value: str) -> str:
-    value = str(value).strip()
-
-    formats = [
-        "%Y-%m-%d",
-        "%d/%m/%Y",
-        "%m/%d/%Y",
-        "%d-%m-%Y",
-        "%Y/%m/%d",
-        "%d.%m.%Y",
-    ]
-
-    for fmt in formats:
-        try:
-            return datetime.strptime(value, fmt).strftime("%Y-%m-%d")
-        except ValueError:
-            continue
-
-    raise ValueError(f"Unsupported date format: {value}")
-
-_MT940_TXN = re.compile(
-    r"^:61:(\d{6})(\d{4})?([CD])(\d+[,\.]\d*)([A-Z]{4})?([^/]*)(//.*)?$"
-)
-
-_TRUNCATION_SUFFIX = re.compile(r"(?:\.{2,}|…|~)\s*$")
-_AMBIGUOUS_KEYWORDS = re.compile(
-    r"\b(UNKNOWN|MISC|VARIOUS|UNSPEC(?:IFIED)?|TBD|N/?A|SEE\s+DETAIL|PENDING)\b|\?\?"
-)
-_GENERIC_ONLY = re.compile(
-    r"^(PAYMENT|DEPOSIT|TRANSFER|WITHDRAWAL|DEBIT|CREDIT|ACH|WIRE)$",
-    re.IGNORECASE,
-)
 
 
 def _classify(description: str) -> str:
@@ -87,269 +29,66 @@ def _classify(description: str) -> str:
     return "OTHER"
 
 
-def _balance_tolerance(policy: Policy) -> float:
-    return float(policy.get("extraction.balance_tolerance_abs", 0.005))
-
-
-def _row_fingerprint(row: dict) -> tuple:
-    return (
-        row.get("date", ""),
-        round(float(row.get("amount", 0)), 2),
-        (row.get("reference") or "").strip(),
-        (row.get("description") or "").strip()[:40],
-    )
-
-
-def _sort_pdf_rows(rows: list[dict]) -> list[dict]:
-    def sort_key(row: dict) -> tuple:
-        page = int(row.get("page", 1))
-        bbox = row.get("bbox", [0, 0, 0, 0])
-        y = bbox[1] if len(bbox) > 1 else 0
-        return (page, -y)
-
-    return sorted(rows, key=sort_key)
-
-
-def _dedupe_pdf_rows(rows: list[dict]) -> tuple[list[dict], int]:
-    seen: set[tuple] = set()
-    deduped: list[dict] = []
-    removed = 0
-    for row in rows:
-        fp = _row_fingerprint(row)
-        if fp in seen:
-            removed += 1
-            continue
-        seen.add(fp)
-        deduped.append(row)
-    return deduped, removed
-
-
-def _validate_page_balance_chain(
-    page_summaries: list[dict],
-    opening: float,
-    closing: float,
-    tolerance: float,
-) -> list[str]:
-    if not page_summaries:
-        return []
-
-    errors: list[str] = []
-    first = page_summaries[0]
-    last = page_summaries[-1]
-    if abs(float(first["opening_balance"]) - opening) > tolerance:
-        errors.append(
-            f"Page 1 opening {float(first['opening_balance']):,.2f} "
-            f"does not match statement opening {opening:,.2f}")
-    for i in range(len(page_summaries) - 1):
-        cur_close = float(page_summaries[i]["closing_balance"])
-        next_open = float(page_summaries[i + 1]["opening_balance"])
-        if abs(cur_close - next_open) > tolerance:
-            errors.append(
-                f"Page {page_summaries[i]['page']} closing {cur_close:,.2f} "
-                f"does not carry to page {page_summaries[i + 1]['page']} "
-                f"opening {next_open:,.2f}")
-    if abs(float(last["closing_balance"]) - closing) > tolerance:
-        errors.append(
-            f"Final page closing {float(last['closing_balance']):,.2f} "
-            f"does not match statement closing {closing:,.2f}")
-    return errors
-
-
-def _validate_page_txn_totals(
-    rows: list[dict],
-    page_summaries: list[dict],
-    tolerance: float,
-) -> list[str]:
-    by_page: dict[int, list[dict]] = defaultdict(list)
-    for row in rows:
-        by_page[int(row.get("page", 1))].append(row)
-
-    errors: list[str] = []
-    for summary in page_summaries:
-        page = int(summary["page"])
-        page_open = float(summary["opening_balance"])
-        page_close = float(summary["closing_balance"])
-        net = round(sum(float(r["amount"]) for r in by_page.get(page, [])), 2)
-        computed = round(page_open + net, 2)
-        if abs(computed - page_close) > tolerance:
-            errors.append(
-                f"Page {page} roll-forward mismatch: opening {page_open:,.2f} + "
-                f"net {net:,.2f} = {computed:,.2f} vs page closing {page_close:,.2f}")
-    return errors
-
-
-def _aggregate_pdf_rows(
-    rows: list[dict],
-    sidecar: dict,
-    ctx: ContextPacket,
-    policy: Policy,
-    audit: AuditLog,
-) -> tuple[list[dict], list[str]]:
-    """Sort, dedupe, and validate multi-page PDF extraction rows."""
-    sorted_rows = _sort_pdf_rows(rows)
-    deduped, dup_count = _dedupe_pdf_rows(sorted_rows)
-    pages = sorted({int(r.get("page", 1)) for r in deduped})
-    audit.step(
-        f"PDF aggregation across {len(pages)} page(s): {len(deduped)} unique rows"
-        + (f" ({dup_count} duplicate row(s) removed at page boundaries)"
-           if dup_count else ""))
-
-    tolerance = _balance_tolerance(policy)
-    opening = float(sidecar.get("opening_balance", ctx.account.opening_balance))
-    closing = float(sidecar.get("closing_balance", ctx.account.closing_balance))
-    page_summaries = sidecar.get("page_summaries", [])
-
-    warnings: list[str] = []
-    warnings.extend(_validate_page_balance_chain(
-        page_summaries, opening, closing, tolerance))
-    if page_summaries:
-        warnings.extend(_validate_page_txn_totals(deduped, page_summaries, tolerance))
-
-    computed = round(opening + sum(float(r["amount"]) for r in deduped), 2)
-    if abs(computed - closing) > tolerance:
-        warnings.append(
-            f"Aggregated document roll-forward mismatch: opening {opening:,.2f} + "
-            f"net {computed - opening:,.2f} = {computed:,.2f} vs closing {closing:,.2f}")
-    if abs(computed - ctx.account.closing_balance) > tolerance:
-        warnings.append(
-            f"Aggregated closing {computed:,.2f} does not match manifest closing "
-            f"{ctx.account.closing_balance:,.2f}")
-
-    for warning in warnings:
-        audit.decision(warning, "Multi-page PDF balance consistency check")
-
-    if not warnings and page_summaries:
-        audit.decision(
-            "Multi-page PDF balances reconcile across all pages and statement totals",
-            "Per-page carry-forward and document roll-forward within tolerance")
-
-    return deduped, warnings
-
-
-def _statement_rollforward(
-    opening: float,
-    closing: float,
-    txns: list[BankTransaction],
-    policy: Policy,
-) -> tuple[float, bool]:
-    tolerance = _balance_tolerance(policy)
-    computed = round(opening + sum(t.amount for t in txns), 2)
-    return computed, abs(computed - closing) < tolerance
-
-
-def _assess_description(
-    description: str,
-    review_threshold: float,
-    *,
-    min_length: int = 8,
-    truncated_field_lengths: list[int] | None = None,
-) -> tuple[float, bool, list[str]]:
-    """Score description quality; flag truncated/ambiguous memos for manual review."""
-    desc = (description or "").strip()
-    reasons: list[str] = []
+def _confidence(description: str, review_threshold: float) -> tuple[float, bool]:
+    """Truncated/ambiguous descriptions get reduced confidence."""
     conf = 1.0
-    field_lengths = truncated_field_lengths or [22, 40]
-
-    if not desc:
-        reasons.append("empty_description")
-        conf -= 0.40
-    elif len(desc) < min_length:
-        reasons.append("very_short_description")
-        conf -= 0.15
-
-    if _TRUNCATION_SUFFIX.search(desc):
-        reasons.append("truncated_suffix")
+    if description.endswith(("...", "..", "~")):
         conf -= 0.30
-    elif desc and len(desc) in field_lengths and desc[-1].isalnum():
-        reasons.append("possible_field_length_truncation")
-        conf -= 0.20
-
-    if _AMBIGUOUS_KEYWORDS.search(desc.upper()):
-        reasons.append("ambiguous_keyword")
-        conf -= 0.10
-
-    if desc and _GENERIC_ONLY.match(desc):
-        reasons.append("generic_description_only")
+    if len(description.strip()) < 8:
         conf -= 0.15
-
-    alpha_chars = sum(1 for c in desc if c.isalpha())
-    if desc and alpha_chars < 3:
-        reasons.append("low_text_content")
-        conf -= 0.20
-
+    if re.search(r"\bUNKNOWN\b|\bMISC\b|\?\?", description.upper()):
+        conf -= 0.10
     conf = round(max(conf, 0.05), 2)
-    needs_review = bool(reasons) or conf < review_threshold
-    return conf, needs_review, reasons
+    return conf, conf < review_threshold
 
 
-def _txn_from_row(
-    *,
-    txn_id: str,
-    date: str,
-    amount: float,
-    currency: str,
-    description: str,
-    reference: str,
-    counterparty: str,
-    evidence: Evidence,
-    review_threshold: float,
-    policy: Policy,
-) -> BankTransaction:
-    conf, review, reasons = _assess_description(
-        description,
-        review_threshold,
-        min_length=int(policy.get("extraction.min_description_length", 8)),
-        truncated_field_lengths=policy.get("extraction.truncated_field_lengths", [22, 40]),
-    )
-    return BankTransaction(
-        txn_id=txn_id,
-        date=date,
-        amount=amount,
-        currency=currency,
-        description=description,
-        reference=reference,
-        counterparty=counterparty,
-        txn_type=_classify(description),
-        confidence=conf,
-        needs_review=review,
-        review_reasons=reasons,
-        evidence=evidence,
-    )
-
-
-def _parse_csv(stmt_path: Path, ctx: ContextPacket, policy: Policy,
-               review_threshold: float) -> list[BankTransaction]:
+def _parse_csv(stmt_path: Path, ctx: ContextPacket, review_threshold: float
+               ) -> list[BankTransaction]:
     txns: list[BankTransaction] = []
     lines = stmt_path.read_text(encoding="utf-8").splitlines()
-    header_idx = next(i for i, ln in enumerate(lines) if not ln.startswith("#"))
+    header_idx = next(i for i, ln in enumerate(lines)
+                      if not ln.startswith("#"))
     reader = csv.DictReader([ln for ln in lines if not ln.startswith("#")])
+    # first data row line number (0-based list, 1-based locator)
     data_line = header_idx + 1
-    for n, row in enumerate(reader, 1):
+    n = 0
+    for row in reader:
+        # Skip malformed/summary rows (real statements often carry total lines)
+        # rather than crashing the whole extraction.
+        date_raw = (row.get("date") or "").strip()
+        amt_raw = (row.get("amount") or "").strip().replace(",", "")
+        try:
+            amount = round(float(amt_raw), 2)
+        except (ValueError, TypeError):
+            continue
+        if not date_raw:
+            continue
+        n += 1
         desc = (row.get("description") or "").strip()
-        raw_amount = float(row["amount"])
-        raw_currency = (row.get("currency") or ctx.account.currency).strip()
-        amount = _convert_currency(raw_amount, raw_currency, ctx)
-        txns.append(_txn_from_row(
+        conf, review = _confidence(desc, review_threshold)
+        txns.append(BankTransaction(
             txn_id=f"B-{n:04d}",
-            date=_normalize_date(row["date"]),
+            date=date_raw,
             amount=amount,
-            currency=ctx.account.currency,
+            currency=(row.get("currency") or ctx.account.currency).strip(),
             description=desc,
             reference=(row.get("reference") or "").strip(),
             counterparty=(row.get("counterparty") or "").strip(),
-            evidence=Evidence(
-                source_file=stmt_path.name,
-                locator=f"line:{data_line + n}",
-                snippet=desc[:80],
-            ),
-            review_threshold=review_threshold,
-            policy=policy,
+            txn_type=_classify(desc),
+            confidence=conf, needs_review=review,
+            evidence=Evidence(source_file=stmt_path.name,
+                              locator=f"line:{data_line + n}",
+                              snippet=desc[:80]),
         ))
     return txns
 
 
-def _parse_mt940(stmt_path: Path, ctx: ContextPacket, policy: Policy,
-                 review_threshold: float) -> list[BankTransaction]:
+_MT940_TXN = re.compile(
+    r"^:61:(\d{6})(\d{4})?([CD])(\d+[,.]?\d*)N(\w{3})(\S*)")
+
+
+def _parse_mt940(stmt_path: Path, ctx: ContextPacket, review_threshold: float
+                 ) -> list[BankTransaction]:
     txns: list[BankTransaction] = []
     lines = stmt_path.read_text(encoding="utf-8").splitlines()
     n = 0
@@ -366,129 +105,235 @@ def _parse_mt940(stmt_path: Path, ctx: ContextPacket, policy: Policy,
         desc = ""
         if i + 1 < len(lines) and lines[i + 1].startswith(":86:"):
             desc = lines[i + 1][4:].strip()
-        txns.append(_txn_from_row(
-            txn_id=f"B-{n:04d}",
-            date=date,
-            amount=amount,
-            currency=ctx.account.currency,
-            description=desc,
-            reference=(ref or "").replace("//", "").strip(),
-            counterparty="",
-            evidence=Evidence(
-                source_file=stmt_path.name,
-                locator=f"line:{i + 1}",
-                snippet=(desc or line)[:80],
-            ),
-            review_threshold=review_threshold,
-            policy=policy,
+        conf, review = _confidence(desc, review_threshold)
+        txns.append(BankTransaction(
+            txn_id=f"B-{n:04d}", date=date, amount=amount,
+            currency=ctx.account.currency, description=desc,
+            reference=ref.replace("//", "").strip(), counterparty="",
+            txn_type=_classify(desc), confidence=conf, needs_review=review,
+            evidence=Evidence(source_file=stmt_path.name,
+                              locator=f"line:{i + 1}", snippet=line[:80]),
         ))
     return txns
 
 
-def _parse_pdf_or_synthetic(stmt_path: Path, ctx: ContextPacket, policy: Policy,
+def _extract_pdf_text(pdf_path: Path) -> str:
+    """Pull the text layer from a born-digital PDF (optional pypdf dep)."""
+    try:
+        from pypdf import PdfReader
+    except Exception:
+        return ""
+    try:
+        reader = PdfReader(str(pdf_path))
+        return "\n".join((page.extract_text() or "") for page in reader.pages).strip()
+    except Exception:
+        return ""
+
+
+# A transaction row in a born-digital statement: date, text, amount[, balance].
+_PDF_TXN = re.compile(
+    r"^\s*(\d{4}-\d{2}-\d{2})\s+(.+?)\s+(-?[\d,]+\.\d{2})(?:\s+(-?[\d,]+\.\d{2}))?\s*$")
+# e.g. PAY0502, ACH7781, CHK3041
+_PDF_REF = re.compile(r"^[A-Z]{2,6}\d{2,}[A-Z0-9-]*$")
+
+
+def _parse_pdf_born_digital(stmt_path: Path, ctx: ContextPacket,
                             review_threshold: float, audit: AuditLog
-                            ) -> tuple[list[BankTransaction], bool, list[str]]:
-    """Born-digital PDFs ship a sidecar text-layer JSON (<stem>.extracted.json)
-    with rows + bounding boxes. Without it, fall back to deterministic
-    synthetic data seeded from account+period (spec: synthetic-data fallback)."""
-    sidecar_path = stmt_path.with_suffix(".extracted.json")
+                            ) -> list[BankTransaction] | None:
+    """DETERMINISTIC parser for clean/born-digital PDF statements (spec: clean
+    PDFs). Reads the text layer with pypdf and parses tabular transaction rows
+    (date / description / amount [/ running balance]). No API, no randomness -
+    so PDF uploads extract real data and reconcile. Returns None if the text
+    layer is missing or has no recognizable rows (caller then tries LLM)."""
+    text = _extract_pdf_text(stmt_path)
+    if not text:
+        return None
     txns: list[BankTransaction] = []
-    balance_warnings: list[str] = []
-    if sidecar_path.exists():
-        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
-        rows, balance_warnings = _aggregate_pdf_rows(
-            sidecar.get("rows", []), sidecar, ctx, policy, audit)
+    page = 1
+    for i, raw in enumerate(text.splitlines(), 1):
+        if raw.strip().startswith("Page ") or "Statement Period" in raw:
+            continue
+        m = _PDF_TXN.match(raw)
+        if not m:
+            continue
+        date, middle, amt_raw, _bal = m.groups()
+        try:
+            amount = round(float(amt_raw.replace(",", "")), 2)
+        except ValueError:
+            continue
+        tokens = middle.split()
+        reference = ""
+        if tokens and _PDF_REF.match(tokens[-1]):
+            reference = tokens[-1]
+            tokens = tokens[:-1]
+        desc = " ".join(tokens).strip()
+        conf, review = _confidence(desc, review_threshold)
+        txns.append(BankTransaction(
+            txn_id=f"B-{len(txns) + 1:04d}", date=date, amount=amount,
+            currency=ctx.account.currency, description=desc, reference=reference,
+            counterparty="", txn_type=_classify(desc), confidence=conf,
+            needs_review=review, extraction_method="pdf_text",
+            evidence=Evidence(source_file=stmt_path.name, locator=f"page:{page},line:{i}",
+                              snippet=raw.strip()[:80]),
+        ))
+    if not txns:
+        return None
+    audit.decision(f"Born-digital PDF parsed deterministically: {len(txns)} rows from "
+                   f"the {stmt_path.name} text layer (pypdf)",
+                   "Rule-based clean-PDF parser - no LLM, fully reproducible")
+    return txns
+
+
+def _parse_pdf_with_llm(stmt_path: Path, ctx: ContextPacket, review_threshold: float,
+                        audit: AuditLog, ai) -> list[BankTransaction] | None:
+    """HYBRID: read the PDF text layer and let GPT-4o-mini structure it into
+    normalized rows. Returns None on any failure so the caller falls back to
+    the deterministic synthetic path."""
+    text = _extract_pdf_text(stmt_path)
+    if not text:
+        audit.step("PDF has no extractable text layer; cannot use LLM extraction")
+        return None
+    system = (
+        "You are a precise bank-statement extraction engine. Return ONLY a JSON "
+        "object with a 'rows' array. Each row: date (YYYY-MM-DD), description "
+        "(string), amount (number, negative for debits/payments, positive for "
+        "credits/deposits), reference (string, may be empty), counterparty "
+        "(string, may be empty), currency (3-letter), confidence (0..1). Do not "
+        "invent transactions; transcribe only what appears in the text.")
+    user = (f"Account currency default: {ctx.account.currency}. Period: "
+            f"{ctx.account.period}.\n\nStatement text:\n{text[:6000]}")
+    data = ai.chat_json("B", system, user, model=ai.extraction_model)
+    if not data or "rows" not in data or not isinstance(data["rows"], list):
+        audit.step("LLM extraction returned no usable rows; falling back")
+        return None
+    txns: list[BankTransaction] = []
+    for n, row in enumerate(data["rows"], 1):
+        try:
+            desc = str(row["description"]).strip()
+            amount = round(float(row["amount"]), 2)
+            date = str(row["date"]).strip()
+        except (KeyError, ValueError, TypeError):
+            continue
+        base_conf, _ = _confidence(desc, review_threshold)
+        llm_conf = row.get("confidence")
+        conf = round(min(base_conf, float(llm_conf)), 2) if isinstance(
+            llm_conf, (int, float)) else base_conf
+        txns.append(BankTransaction(
+            txn_id=f"B-{n:04d}", date=date, amount=amount,
+            currency=str(row.get("currency") or ctx.account.currency),
+            description=desc, reference=str(row.get("reference") or ""),
+            counterparty=str(row.get("counterparty") or ""),
+            txn_type=_classify(desc), confidence=conf,
+            needs_review=conf < review_threshold, extraction_method="llm",
+            evidence=Evidence(source_file=stmt_path.name,
+                              locator=f"page:1 (llm:{ai.extraction_model})",
+                              snippet=desc[:80]),
+        ))
+    if not txns:
+        return None
+    audit.decision(f"LLM ({ai.extraction_model}) extracted {len(txns)} rows from PDF "
+                   f"text layer", "Hybrid extraction; deterministic synthetic fallback "
+                   "available if the model is unavailable")
+    return txns
+
+
+def _parse_pdf_or_synthetic(stmt_path: Path, ctx: ContextPacket,
+                            review_threshold: float, audit: AuditLog, ai=None
+                            ) -> tuple[list[BankTransaction], bool]:
+    """PDF extraction order: (1) sidecar text-layer JSON with bounding boxes,
+    (2) HYBRID LLM extraction from the PDF text layer (if available),
+    (3) deterministic synthetic-data fallback seeded from account+period."""
+    sidecar = stmt_path.with_suffix(".extracted.json")
+    txns: list[BankTransaction] = []
+    if sidecar.exists():
+        rows = json.loads(sidecar.read_text(encoding="utf-8"))["rows"]
         audit.step(
-            f"PDF text layer found ({sidecar_path.name}); "
-            f"{len(rows)} aggregated rows with bounding boxes")
+            f"PDF text layer found ({sidecar.name}); {len(rows)} rows with bounding boxes")
         for n, row in enumerate(rows, 1):
             desc = row["description"]
+            conf, review = _confidence(desc, review_threshold)
             bbox = row.get("bbox", [0, 0, 0, 0])
-            txns.append(_txn_from_row(
-                txn_id=f"B-{n:04d}",
-                date=_normalize_date(row["date"]),
+            txns.append(BankTransaction(
+                txn_id=f"B-{n:04d}", date=row["date"],
                 amount=round(float(row["amount"]), 2),
                 currency=row.get("currency", ctx.account.currency),
-                description=desc,
-                reference=row.get("reference", ""),
+                description=desc, reference=row.get("reference", ""),
                 counterparty=row.get("counterparty", ""),
-                evidence=Evidence(
-                    source_file=stmt_path.name,
-                    locator=f"page:{row.get('page', 1)},bbox:{bbox}",
-                    snippet=desc[:80],
-                ),
-                review_threshold=review_threshold,
-                policy=policy,
+                txn_type=_classify(desc), confidence=conf, needs_review=review,
+                evidence=Evidence(source_file=stmt_path.name,
+                                  locator=f"page:{row.get('page', 1)},bbox:{bbox}",
+                                  snippet=desc[:80]),
             ))
-        return txns, False, balance_warnings
+        return txns, False
 
-    audit.decision("No PDF text layer; using deterministic synthetic fallback",
+    # ---- deterministic born-digital PDF parser (clean PDFs, no API) -------
+    born = _parse_pdf_born_digital(stmt_path, ctx, review_threshold, audit)
+    if born:
+        return born, False
+
+    # ---- HYBRID: LLM extraction for messy/scanned PDF text ----------------
+    if ai is not None and getattr(ai, "llm_available", False):
+        llm_txns = _parse_pdf_with_llm(
+            stmt_path, ctx, review_threshold, audit, ai)
+        if llm_txns:
+            return llm_txns, False
+
+    # ---- deterministic synthetic fallback (last resort) ------------------
+    audit.decision("No PDF text layer / LLM unavailable; using deterministic "
+                   "synthetic fallback",
                    "Seeded from account_id+period so re-runs are identical")
     seed = sum(ord(c) for c in ctx.account.account_id + ctx.account.period)
     year, month = ctx.account.period.split("-")
     descs = ["VENDOR PAYMENT ACME", "CUSTOMER DEPOSIT", "MONTHLY SERVICE FEE",
              "PAYROLL ACH BATCH", "WIRE IN - CLIENT"]
     for n in range(1, 6):
-        amt = round(((seed * n * 37) % 9000) / 10 + 25, 2) * (1 if n % 2 else -1)
+        amt = round(((seed * n * 37) % 9000) / 10 + 25, 2) * \
+            (1 if n % 2 == 0 else -1)
         desc = descs[(seed + n) % len(descs)]
-        txns.append(_txn_from_row(
-            txn_id=f"B-{n:04d}",
-            date=f"{year}-{month}-{min(n * 5, 28):02d}",
-            amount=amt,
-            currency=ctx.account.currency,
-            description=desc,
-            reference=f"SYN{seed}{n:02d}",
-            counterparty="",
-            evidence=Evidence(
-                source_file=stmt_path.name,
-                locator=f"page:1,bbox:[72,{700 - n * 20},540,{716 - n * 20}]",
-                snippet=f"(synthetic) {desc}",
-            ),
-            review_threshold=review_threshold,
-            policy=policy,
+        conf, review = _confidence(desc, review_threshold)
+        txns.append(BankTransaction(
+            txn_id=f"B-{n:04d}", date=f"{year}-{month}-{min(n * 5, 28):02d}",
+            amount=amt, currency=ctx.account.currency, description=desc,
+            reference=f"SYN{seed}{n:02d}", counterparty="",
+            txn_type=_classify(desc), confidence=conf, needs_review=review,
+            extraction_method="synthetic",
+            evidence=Evidence(source_file=stmt_path.name,
+                              locator=f"page:1,bbox:[72,{700 - n * 20},540,{716 - n * 20}]",
+                              snippet=f"(synthetic) {desc}"),
         ))
-    return txns, True, balance_warnings
+    return txns, True
 
 
 def run_agent_b(ctx: ContextPacket, run_dir: Path, policy: Policy,
-                audit: AuditLog) -> tuple[TransactionsArtifact, list[Finding]]:
+                audit: AuditLog, ai=None) -> tuple[TransactionsArtifact, list[Finding]]:
     audit.section("Agent B", "Transaction Extraction")
     findings: list[Finding] = []
     stmt_path = Path(ctx.files["bank_statement"])
-    review_threshold = float(policy.get("thresholds.extraction_review_confidence", 0.8))
+    review_threshold = float(policy.get(
+        "thresholds.extraction_review_confidence", 0.8))
     synthetic = False
-    pdf_balance_warnings: list[str] = []
 
     if ctx.account.statement_format == "csv":
-        txns = _parse_csv(stmt_path, ctx, policy, review_threshold)
+        txns = _parse_csv(stmt_path, ctx, review_threshold)
     elif ctx.account.statement_format == "mt940":
-        txns = _parse_mt940(stmt_path, ctx, policy, review_threshold)
+        txns = _parse_mt940(stmt_path, ctx, review_threshold)
     else:
-        txns, synthetic, pdf_balance_warnings = _parse_pdf_or_synthetic(
-            stmt_path, ctx, policy, review_threshold, audit)
+        txns, synthetic = _parse_pdf_or_synthetic(stmt_path, ctx, review_threshold,
+                                                  audit, ai=ai)
 
     audit.step(f"Extracted {len(txns)} transactions from {stmt_path.name} "
                f"({ctx.account.statement_format.upper()})")
 
-    computed_closing, reconciles = _statement_rollforward(
-        ctx.account.opening_balance, ctx.account.closing_balance, txns, policy)
+    # multi-page/statement-level aggregation: opening + sum(txns) vs closing
+    computed_closing = round(
+        ctx.account.opening_balance + sum(t.amount for t in txns), 2)
+    reconciles = abs(computed_closing - ctx.account.closing_balance) < 0.005
     audit.decision(
         f"Balance roll-forward: opening {ctx.account.opening_balance:,.2f} + "
         f"net movement = {computed_closing:,.2f}; statement closing "
         f"{ctx.account.closing_balance:,.2f} -> "
         f"{'RECONCILES' if reconciles else 'DOES NOT RECONCILE'}",
         "Sum of extracted amounts checked against statement closing balance")
-
-    for i, warning in enumerate(pdf_balance_warnings, 1):
-        findings.append(Finding(
-            finding_id=f"B-BAL-PDF-{i:03d}", agent="B",
-            category="pdf_balance_mismatch", severity="high", confidence=1.0,
-            title="Multi-page PDF balance inconsistency",
-            detail=warning,
-            evidence=[Evidence(source_file=stmt_path.name, locator="pdf_aggregation",
-                               snippet=warning[:120])],
-            recommendation="Verify page extraction completeness and page carry-forward balances",
-        ))
 
     if not reconciles:
         findings.append(Finding(
@@ -502,28 +347,20 @@ def run_agent_b(ctx: ContextPacket, run_dir: Path, policy: Policy,
             recommendation="Verify extraction completeness / request statement re-issue",
         ))
 
-    review_count = 0
     for t in txns:
-        if not t.needs_review:
-            continue
-        review_count += 1
-        reason_text = ", ".join(t.review_reasons) if t.review_reasons else "low_confidence"
-        findings.append(Finding(
-            finding_id=f"B-REV-{t.txn_id}", agent="B", category="extraction_review",
-            severity="medium", confidence=t.confidence,
-            title=f"Ambiguous/truncated description on {t.txn_id}",
-            detail=(f"'{t.description}' flagged for manual review "
-                    f"(confidence {t.confidence:.2f}, reasons: {reason_text})"),
-            evidence=[t.evidence], related_txn_ids=[t.txn_id],
-            recommendation="Manual review before GL mapping",
-            open_question="What does this memo refer to?",
-        ))
-        audit.step(
-            f"Flagged {t.txn_id} for manual review "
-            f"(confidence {t.confidence:.2f}, reasons: {reason_text}): "
-            f"'{t.description}'")
-
-    audit.step(f"{review_count} transaction(s) flagged for description review")
+        if t.needs_review:
+            findings.append(Finding(
+                finding_id=f"B-REV-{t.txn_id}", agent="B", category="extraction_review",
+                severity="medium", confidence=t.confidence,
+                title=f"Ambiguous/truncated description on {t.txn_id}",
+                detail=f"'{t.description}' scored {t.confidence:.2f} < "
+                f"{review_threshold:.2f} review threshold",
+                evidence=[t.evidence], related_txn_ids=[t.txn_id],
+                recommendation="Manual review before GL mapping",
+                open_question="What does this memo refer to?",
+            ))
+            audit.step(f"Flagged {t.txn_id} for manual review "
+                       f"(confidence {t.confidence:.2f}): '{t.description}'")
 
     artifact = TransactionsArtifact(
         run_id=ctx.run_id, account_id=ctx.account.account_id,
